@@ -85,49 +85,71 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       return;
     }
 
-    if (_speechEnabled && !_isListening) {
+    if (!_speechEnabled) {
+      debugPrint('Speech recognition not enabled');
+      return;
+    }
+
+    if (_isListening) {
+      debugPrint('Already listening');
+      return;
+    }
+
+    try {
       setState(() {
         _isListening = true;
       });
 
-      try {
-        await _speechToText.listen(
-          onResult: (result) {
-            if (mounted) {
-              setState(() {
-                chatBoxController.text = result.recognizedWords;
-              });
-            }
-          },
-          listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 3),
-          partialResults: true,
-          localeId: "en_US",
-          cancelOnError: true,
+      await _speechToText.listen(
+        onResult: (result) {
+          debugPrint('Speech result: ${result.recognizedWords}');
+          if (mounted) {
+            setState(() {
+              chatBoxController.text = result.recognizedWords;
+            });
+          }
+        },
+        listenFor: const Duration(seconds: 10),
+        pauseFor: const Duration(seconds: 2),
+        partialResults: true,
+        onSoundLevelChange: (level) {
+          debugPrint('Sound level: $level');
+        },
+        cancelOnError: false,
+        listenMode: ListenMode.confirmation,
+      );
+    } catch (e) {
+      debugPrint('Error starting speech recognition: $e');
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Speech recognition error: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         );
-      } catch (e) {
-        debugPrint('Error starting speech recognition: $e');
-        if (mounted) {
-          setState(() {
-            _isListening = false;
-          });
-        }
       }
     }
   }
 
   void _stopListening() async {
-    if (_isListening) {
-      try {
-        await _speechToText.stop();
-      } catch (e) {
-        debugPrint('Error stopping speech recognition: $e');
-      }
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-        });
-      }
+    if (!_isListening) return;
+
+    try {
+      await _speechToText.stop();
+      debugPrint('Speech recognition stopped');
+    } catch (e) {
+      debugPrint('Error stopping speech recognition: $e');
+    }
+    
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+      });
     }
   }
 
