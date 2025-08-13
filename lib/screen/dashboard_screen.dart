@@ -27,58 +27,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   final SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
   bool _isListening = false;
-  String _wordsSpoken = "";
-
-  // --- Safety helpers -----------------------------------------------------
-
-  /// Returns the list of questions for the current selected index,
-  /// or an empty list if AppConstant.defaultQues is not ready.
-  List<Map<String, dynamic>> get _currentQuestions {
-    try {
-      final list = AppConstant.defaultQues;
-      if (list == null || list.isEmpty) return <Map<String, dynamic>>[];
-      if (selectedIndex < 0 || selectedIndex >= list.length)
-        return <Map<String, dynamic>>[];
-      final questions = list[selectedIndex]['question'];
-      if (questions is List) {
-        return List<Map<String, dynamic>>.from(
-          questions.map((e) => Map<String, dynamic>.from(e)),
-        );
-      }
-      return <Map<String, dynamic>>[];
-    } catch (_) {
-      return <Map<String, dynamic>>[];
-    }
-  }
-
-  /// Safe accessor for category title.
-  String _categoryTitleAt(int index) {
-    try {
-      final list = AppConstant.defaultQues;
-      if (list == null || list.isEmpty) return '';
-      final title = list[index]["title"];
-      return title?.toString() ?? '';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  /// Safely extract icon/color/ques with fallbacks.
-  IconData _safeIcon(dynamic v) {
-    if (v is IconData) return v;
-    return Icons.question_answer;
-  }
-
-  Color _safeColor(dynamic v) {
-    if (v is Color) return v;
-    return AppColors.primary;
-  }
-
-  String _safeQues(dynamic v) {
-    return (v?.toString() ?? '');
-  }
-
-  // -----------------------------------------------------------------------
 
   @override
   void initState() {
@@ -115,11 +63,17 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _initializeSpeech() async {
-    _speechEnabled = await _speechToText.initialize(
-      onError: (error) => debugPrint('Speech recognition error: $error'),
-      onStatus: (status) => debugPrint('Speech recognition status: $status'),
-    );
-    setState(() {});
+    try {
+      _speechEnabled = await _speechToText.initialize(
+        onError: (error) => debugPrint('Speech recognition error: $error'),
+        onStatus: (status) => debugPrint('Speech recognition status: $status'),
+      );
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Failed to initialize speech: $e');
+    }
   }
 
   void _startListening() async {
@@ -128,9 +82,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (status != PermissionStatus.granted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Microphone permission is required for voice input'),
-            backgroundColor: Colors.red,
+          SnackBar(
+            content: const Text('Microphone permission is required for voice input'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
@@ -140,31 +96,46 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (_speechEnabled && !_isListening) {
       setState(() {
         _isListening = true;
-        _wordsSpoken = "";
       });
 
-      await _speechToText.listen(
-        onResult: (result) {
+      try {
+        await _speechToText.listen(
+          onResult: (result) {
+            if (mounted) {
+              setState(() {
+                searchController.text = result.recognizedWords;
+              });
+            }
+          },
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 3),
+          partialResults: true,
+          localeId: "en_US",
+          cancelOnError: true,
+        );
+      } catch (e) {
+        debugPrint('Error starting speech recognition: $e');
+        if (mounted) {
           setState(() {
-            _wordsSpoken = result.recognizedWords;
-            searchController.text = _wordsSpoken;
+            _isListening = false;
           });
-        },
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-        partialResults: true,
-        localeId: "en_US",
-        cancelOnError: true,
-      );
+        }
+      }
     }
   }
 
   void _stopListening() async {
     if (_isListening) {
-      await _speechToText.stop();
-      setState(() {
-        _isListening = false;
-      });
+      try {
+        await _speechToText.stop();
+      } catch (e) {
+        debugPrint('Error stopping speech recognition: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+      }
     }
   }
 
@@ -178,8 +149,6 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -261,60 +230,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ],
                     ),
                   ),
-                ),
-
-                const SizedBox(height: 32),
-
-                // Quick Actions
-                AnimatedBuilder(
-                  animation: _staggerController,
-                  builder: (context, child) {
-                    return SlideTransition(
-                      position:
-                          Tween<Offset>(
-                            begin: const Offset(-0.3, 0),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: _staggerController,
-                              curve: const Interval(
-                                0.2,
-                                0.6,
-                                curve: Curves.elasticOut,
-                              ),
-                            ),
-                          ),
-                      child: FadeTransition(
-                        opacity: Tween<double>(begin: 0, end: 1).animate(
-                          CurvedAnimation(
-                            parent: _staggerController,
-                            curve: const Interval(0.2, 0.6),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _buildQuickAction(
-                                icon: Icons.chat_bubble_outline_rounded,
-                                title: 'New Chat',
-                                subtitle: 'Start conversation',
-                                onTap: () {},
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: _buildQuickAction(
-                                icon: Icons.history_rounded,
-                                title: 'History',
-                                subtitle: 'View past chats',
-                                onTap: () {},
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
                 ),
 
                 const SizedBox(height: 32),
@@ -419,57 +334,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                   },
                 ),
 
-                // Add bottom padding for better scrolling
                 const SizedBox(height: 100),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickAction({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return CustomCard(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                gradient: AppColors.primaryGradient,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: Colors.white, size: 24),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-                fontFamily: 'fontMain',
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textSecondary,
-                fontFamily: 'fontMain',
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -490,26 +358,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               onSubmitted: (value) {
                 if (value.trim().isNotEmpty) {
-                  Navigator.push(
-                    context,
-                    PageRouteBuilder(
-                      pageBuilder: (context, animation, secondaryAnimation) =>
-                          ChatScreen(query: value.trim()),
-                      transitionsBuilder:
-                          (context, animation, secondaryAnimation, child) {
-                            return SlideTransition(
-                              position: animation.drive(
-                                Tween(
-                                  begin: const Offset(1.0, 0.0),
-                                  end: Offset.zero,
-                                ).chain(CurveTween(curve: Curves.elasticOut)),
-                              ),
-                              child: child,
-                            );
-                          },
-                      transitionDuration: const Duration(milliseconds: 800),
-                    ),
-                  );
+                  _navigateToChat(value.trim());
                 }
               },
               maxLines: 4,
@@ -565,7 +414,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(16),
-                      onTap: _isListening ? _stopListening : _startListening,
+                      onTap: _speechEnabled 
+                          ? (_isListening ? _stopListening : _startListening)
+                          : null,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: AnimatedSwitcher(
@@ -578,8 +429,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   key: ValueKey('listening'),
                                 )
                               : Icon(
-                                  Icons.mic_none_rounded,
-                                  color: AppColors.textSecondary,
+                                  _speechEnabled ? Icons.mic_none_rounded : Icons.mic_off,
+                                  color: _speechEnabled ? AppColors.textSecondary : AppColors.textTertiary,
                                   size: 24,
                                   key: const ValueKey('not_listening'),
                                 ),
@@ -608,38 +459,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       borderRadius: BorderRadius.circular(16),
                       onTap: () {
                         if (searchController.text.trim().isNotEmpty) {
-                          Navigator.push(
-                            context,
-                            PageRouteBuilder(
-                              pageBuilder:
-                                  (context, animation, secondaryAnimation) =>
-                                      ChatScreen(
-                                        query: searchController.text.trim(),
-                                      ),
-                              transitionsBuilder:
-                                  (
-                                    context,
-                                    animation,
-                                    secondaryAnimation,
-                                    child,
-                                  ) {
-                                    return SlideTransition(
-                                      position: animation.drive(
-                                        Tween(
-                                          begin: const Offset(1.0, 0.0),
-                                          end: Offset.zero,
-                                        ).chain(
-                                          CurveTween(curve: Curves.elasticOut),
-                                        ),
-                                      ),
-                                      child: child,
-                                    );
-                                  },
-                              transitionDuration: const Duration(
-                                milliseconds: 800,
-                              ),
-                            ),
-                          );
+                          _navigateToChat(searchController.text.trim());
                         }
                       },
                       child: const Padding(
@@ -694,112 +514,78 @@ class _DashboardScreenState extends State<DashboardScreen>
         const SizedBox(height: 16),
         SizedBox(
           height: 50,
-          child:
-              AppConstant.defaultQues == null || AppConstant.defaultQues.isEmpty
-              ? Center(
-                  child: Text(
-                    'No categories',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                )
-              : ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: AppConstant.defaultQues.length,
-                  itemBuilder: (context, index) {
-                    final isSelected = index == selectedIndex;
-                    final title = _categoryTitleAt(index);
-                    return AnimatedContainer(
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: AppConstant.defaultQues.length,
+            itemBuilder: (context, index) {
+              final isSelected = index == selectedIndex;
+              final title = AppConstant.defaultQues[index]["title"] ?? '';
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                margin: const EdgeInsets.only(right: 12),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(25),
+                    onTap: () {
+                      setState(() {
+                        selectedIndex = index;
+                      });
+                    },
+                    child: AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
-                      margin: const EdgeInsets.only(right: 12),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(25),
-                          onTap: () {
-                            setState(() {
-                              selectedIndex = index;
-                            });
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              gradient: isSelected
-                                  ? AppColors.primaryGradient
-                                  : null,
-                              color: isSelected ? null : AppColors.surface,
-                              borderRadius: BorderRadius.circular(25),
-                              border: isSelected
-                                  ? null
-                                  : Border.all(color: AppColors.border),
-                              boxShadow: isSelected
-                                  ? [
-                                      BoxShadow(
-                                        color: AppColors.primary.withOpacity(
-                                          0.3,
-                                        ),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ]
-                                  : null,
-                            ),
-                            child: Center(
-                              child: Text(
-                                title,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : AppColors.textSecondary,
-                                  fontFamily: 'fontMain',
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: isSelected
+                            ? AppColors.primaryGradient
+                            : null,
+                        color: isSelected ? null : AppColors.surface,
+                        borderRadius: BorderRadius.circular(25),
+                        border: isSelected
+                            ? null
+                            : Border.all(color: AppColors.border),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: AppColors.primary.withOpacity(0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
                                 ),
-                              ),
-                            ),
+                              ]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: isSelected
+                                ? Colors.white
+                                : AppColors.textSecondary,
+                            fontFamily: 'fontMain',
                           ),
                         ),
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
+              );
+            },
+          ),
         ),
       ],
     );
   }
 
   Widget _buildQuestionsGrid() {
-    final questions = _currentQuestions;
-
-    if (questions.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Popular Questions',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-              fontFamily: 'fontMain',
-            ),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: Text(
-              'No questions available',
-              style: TextStyle(color: AppColors.textSecondary),
-            ),
-          ),
-        ],
-      );
-    }
+    final questions = AppConstant.defaultQues[selectedIndex]['question'] as List;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -826,11 +612,6 @@ class _DashboardScreenState extends State<DashboardScreen>
           itemCount: questions.length,
           itemBuilder: (context, index) {
             final data = questions[index];
-            // safe fallbacks
-            final icon = _safeIcon(data['icon']);
-            final color = _safeColor(data['color']);
-            final ques = _safeQues(data['ques']);
-
             return AnimatedBuilder(
               animation: _staggerController,
               builder: (context, child) {
@@ -857,11 +638,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         curve: Interval(0.8 + delay, 1.0 + delay),
                       ),
                     ),
-                    child: _buildQuestionCard({
-                      'icon': icon,
-                      'color': color,
-                      'ques': ques,
-                    }),
+                    child: _buildQuestionCard(data),
                   ),
                 );
               },
@@ -875,28 +652,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildQuestionCard(Map<String, dynamic> data) {
     return CustomCard(
       onTap: () {
-        final q = _safeQues(data['ques']);
-        if (q.isEmpty) return;
-        Navigator.push(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                ChatScreen(query: q),
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) {
-                  return SlideTransition(
-                    position: animation.drive(
-                      Tween(
-                        begin: const Offset(1.0, 0.0),
-                        end: Offset.zero,
-                      ).chain(CurveTween(curve: Curves.elasticOut)),
-                    ),
-                    child: child,
-                  );
-                },
-            transitionDuration: const Duration(milliseconds: 800),
-          ),
-        );
+        final question = data['ques']?.toString() ?? '';
+        if (question.isNotEmpty) {
+          _navigateToChat(question);
+        }
       },
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -906,19 +665,19 @@ class _DashboardScreenState extends State<DashboardScreen>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: (_safeColor(data['color'])).withOpacity(0.1),
+                color: (data['color'] as Color? ?? AppColors.primary).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
-                _safeIcon(data['icon']),
-                color: _safeColor(data['color']),
+                data['icon'] as IconData? ?? Icons.question_answer,
+                color: data['color'] as Color? ?? AppColors.primary,
                 size: 28,
               ),
             ),
             const SizedBox(height: 16),
             Expanded(
               child: Text(
-                _safeQues(data['ques']),
+                data['ques']?.toString() ?? '',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -952,6 +711,28 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _navigateToChat(String query) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            ChatScreen(query: query),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: animation.drive(
+              Tween(
+                begin: const Offset(1.0, 0.0),
+                end: Offset.zero,
+              ).chain(CurveTween(curve: Curves.elasticOut)),
+            ),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 800),
       ),
     );
   }

@@ -5,7 +5,6 @@ import 'package:chat_bot/widgets/animated_message_bubble.dart';
 import 'package:chat_bot/widgets/gradient_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -29,9 +28,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _speechEnabled = false;
   bool _isListening = false;
 
-  /// Time format
-  DateFormat dateFormat = DateFormat().add_jm();
-
   @override
   void initState() {
     super.initState();
@@ -48,7 +44,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _initializeSpeech();
     _animationController.forward();
 
-    /// Send initial query when the screen opens
+    // Send initial query when the screen opens
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
       Provider.of<MessageProvider>(
         context,
@@ -58,24 +54,34 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _initializeSpeech() async {
-    _speechEnabled = await _speechToText.initialize(
-      onError: (error) => print('Speech recognition error: $error'),
-      onStatus: (status) => print('Speech recognition status: $status'),
-    );
-    setState(() {});
+    try {
+      _speechEnabled = await _speechToText.initialize(
+        onError: (error) => debugPrint('Speech recognition error: $error'),
+        onStatus: (status) => debugPrint('Speech recognition status: $status'),
+      );
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Failed to initialize speech: $e');
+    }
   }
 
   void _startListening() async {
     var status = await Permission.microphone.request();
     if (status != PermissionStatus.granted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Microphone permission is required for voice input',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Microphone permission is required for voice input',
+            ),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
-          backgroundColor: AppColors.error,
-        ),
-      );
+        );
+      }
       return;
     }
 
@@ -84,27 +90,44 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _isListening = true;
       });
 
-      await _speechToText.listen(
-        onResult: (result) {
+      try {
+        await _speechToText.listen(
+          onResult: (result) {
+            if (mounted) {
+              setState(() {
+                chatBoxController.text = result.recognizedWords;
+              });
+            }
+          },
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 3),
+          partialResults: true,
+          localeId: "en_US",
+          cancelOnError: true,
+        );
+      } catch (e) {
+        debugPrint('Error starting speech recognition: $e');
+        if (mounted) {
           setState(() {
-            chatBoxController.text = result.recognizedWords;
+            _isListening = false;
           });
-        },
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-        partialResults: true,
-        localeId: "en_US",
-        cancelOnError: true,
-      );
+        }
+      }
     }
   }
 
   void _stopListening() async {
     if (_isListening) {
-      await _speechToText.stop();
-      setState(() {
-        _isListening = false;
-      });
+      try {
+        await _speechToText.stop();
+      } catch (e) {
+        debugPrint('Error stopping speech recognition: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+      }
     }
   }
 
@@ -224,19 +247,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ),
       ),
       centerTitle: true,
-      actions: [
-        Container(
-          margin: const EdgeInsets.only(right: 16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: IconButton(
-            icon: Icon(Icons.more_vert_rounded, color: AppColors.textPrimary),
-            onPressed: () {},
-          ),
-        ),
-      ],
     );
   }
 
@@ -321,7 +331,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: _isListening ? _stopListening : _startListening,
+          onTap: _speechEnabled 
+              ? (_isListening ? _stopListening : _startListening)
+              : null,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: AnimatedSwitcher(
@@ -334,8 +346,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       key: ValueKey('listening'),
                     )
                   : Icon(
-                      Icons.mic_none_rounded,
-                      color: AppColors.textSecondary,
+                      _speechEnabled ? Icons.mic_none_rounded : Icons.mic_off,
+                      color: _speechEnabled ? AppColors.textSecondary : AppColors.textTertiary,
                       size: 24,
                       key: const ValueKey('not_listening'),
                     ),
@@ -444,41 +456,4 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     }
   }
-}
-
-/// ====== Missing text styles ======
-TextStyle mTextStyle18({
-  required Color fontColor,
-  FontWeight fontWeight = FontWeight.normal,
-}) {
-  return TextStyle(
-    fontSize: 18,
-    color: fontColor,
-    fontWeight: fontWeight,
-    fontFamily: 'fontMain',
-  );
-}
-
-TextStyle mTextStyle15({
-  required Color fontColor,
-  FontWeight fontWeight = FontWeight.normal,
-}) {
-  return TextStyle(
-    fontSize: 15,
-    color: fontColor,
-    fontWeight: fontWeight,
-    fontFamily: 'fontMain',
-  );
-}
-
-TextStyle mTextStyle11({
-  required Color fontColor,
-  FontWeight fontWeight = FontWeight.normal,
-}) {
-  return TextStyle(
-    fontSize: 11,
-    color: fontColor,
-    fontWeight: fontWeight,
-    fontFamily: 'fontMain',
-  );
 }
